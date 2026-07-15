@@ -1,0 +1,205 @@
+########################################
+# Busca processo em instância Especial #
+########################################
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import pandas as pd
+import time
+
+# Lista de números de processos
+numeros_processos = [
+'xxxxxxx-xx.2025.8.26.xxxx',
+'yyyyyyy-yy.2025.8.26.yyyy'
+]
+
+# Caminho do ChromeDriver
+service = Service(ChromeDriverManager().install())
+driver = webdriver.Chrome(service=service)
+
+# URL do site de consulta do TJSP (2ª instância)
+url_base = "https://esaj.tjsp.jus.br/cposgcr/open.do"
+
+# Lista única para armazenar todos os dados
+dados_processos = []
+
+# Caminho para salvar a planilha
+caminho_planilha = r"C:\Users\seu_path\06_especial.xlsx"
+
+def salvar_planilha():
+    df = pd.DataFrame(dados_processos)
+    df.to_excel(caminho_planilha, sheet_name="Processos", index=False)
+    print("Planilha salva com sucesso!")
+
+for numero in numeros_processos:
+    print(f"\nIniciando extração do processo: {numero}")
+    driver.get(url_base)
+    time.sleep(2)
+
+    try:
+        # Preenche o campo do número do processo
+        campo_processo = WebDriverWait(driver, 8).until(
+            EC.presence_of_element_located((By.ID, "numeroDigitoAnoUnificado"))
+        )
+        campo_processo.clear()
+        campo_processo.send_keys(numero[:15])
+        print(f"Número inserido no campo principal: {numero[:15]}")
+
+        # Preenche o campo "foroNumeroUnificado"
+        try:
+            campo_foro = WebDriverWait(driver, 8).until(
+                EC.presence_of_element_located((By.ID, "foroNumeroUnificado"))
+            )
+            campo_foro.clear()
+            campo_foro.send_keys(numero[-4:])
+            print(f"Foro inserido: {numero[-4:]}")
+        except Exception as e:
+            print(f"Erro ao preencher foro: {e}")
+
+        # Clica no botão "Consultar"
+        botao_consultar = WebDriverWait(driver, 6).until(
+            EC.element_to_be_clickable((By.ID, "pbConsultar"))
+        )
+        botao_consultar.click()
+        time.sleep(5)
+
+        # Verifica a existência da mensagem de erro
+        mensagem_erro = driver.find_elements(By.ID, "mensagemRetorno")
+        if mensagem_erro:
+            dados_processos.append({
+                "Número do Processo Procurado": numero,
+                "Situação": "Não Localizado"
+            })
+            salvar_planilha()
+            continue
+
+        # Clica no botão "Mais" para expandir os dados secundários
+        try:
+            botao_mais = WebDriverWait(driver, 8).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "span.unj-link-collapse__show"))
+            )
+            botao_mais.click()
+            time.sleep(2)
+        except Exception as e:
+            print(f"Erro ao clicar no botão 'Mais': {e}")
+
+        # Extrai os dados do processo
+        try:
+            numero_processo = driver.find_element(By.ID, "numeroProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair número do processo: {e}")
+            numero_processo = "Não Localizado"
+
+        try:
+            classe = driver.find_element(By.ID, "classeProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair classe: {e}")
+            classe = "Não Localizado"
+
+        try:
+            assunto = driver.find_element(By.ID, "assuntoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair assunto: {e}")
+            assunto = "Não Localizado"
+
+        try:
+            secao = driver.find_element(By.ID, "secaoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair seção: {e}")
+            secao = "Não Localizado"
+
+        try:
+            julgador = driver.find_element(By.ID, "orgaoJulgadorProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair órgão julgador: {e}")
+            julgador = "Não Localizado"
+
+        try:
+            valor_acao = driver.find_element(By.ID, "valorAcaoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair valor da ação: {e}")
+            valor_acao = "Não Localizado"
+
+        try:
+            area = driver.find_element(By.ID, "areaProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair área: {e}")
+            area = "Não Localizado"
+
+        # Extrai o campo Origem
+        try:
+            origem_elem = driver.find_element(By.XPATH, "//div[contains(@class, 'col-lg-3 mb-2') and .//span[@class='unj-label' and text()='Origem']]//div[@class='line-clamp__2']/span")
+            origem = origem_elem.text.strip()
+        except Exception as e:
+            print(f"Erro ao extrair origem: {e}")
+            origem = "Não Localizado"
+
+        # Extrai o campo Volume
+        try:
+            volume = driver.find_element(By.ID, "volumeApensoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair volume: {e}")
+            volume = "Não Localizado"
+
+        # Clica no botão "Mais" para exibir todas as movimentações
+        try:
+            botao_mais_movimentacoes = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "linkmovimentacoes"))
+            )
+            driver.execute_script("arguments[0].click();", botao_mais_movimentacoes)  # Clique via JavaScript
+            time.sleep(5)  # Tempo para carregar a tabela
+        except Exception as e:
+            print(f"Erro ao clicar no botão 'Mais' das movimentações: {e}")
+
+        # Coletando todas as movimentações
+        try:
+            print("Verificando tabela de movimentações...")
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#tabelaTodasMovimentacoes"))
+            )
+            movimentacoes = driver.find_elements(By.CSS_SELECTOR, "tr.movimentacaoProcesso")
+            print(f"Encontradas {len(movimentacoes)} movimentações.")
+            todas_movimentacoes = []
+            for movimentacao in movimentacoes:
+                try:
+                    data = movimentacao.find_element(By.CLASS_NAME, "dataMovimentacaoProcesso").text.strip()
+                    descricao = movimentacao.find_element(By.CLASS_NAME, "descricaoMovimentacaoProcesso").text.strip()
+                    todas_movimentacoes.append(f"{data}: {descricao}")
+                    print(f"Movimentação capturada: {data}: {descricao}")
+                except Exception as e:
+                    print(f"Erro ao extrair movimentação: {e}")
+            if not todas_movimentacoes:
+                print("Nenhuma movimentação válida encontrada na tabela.")
+        except Exception as e:
+            print(f"Erro ao localizar a tabela de movimentações: {e}")
+            todas_movimentacoes = ["Não Localizado"]
+
+        # Adiciona os dados na lista única
+        dados_processos.append({
+            "Número do Processo": numero_processo,
+            "Classe": classe,
+            "Assunto": assunto,
+            "Seção": secao,
+            "Órgão Julgador": julgador,
+            "Valor da Ação": valor_acao,
+            "Área": area,
+            "Origem": origem,
+            "Volume": volume,
+            "Todas as Movimentações": "\n".join(todas_movimentacoes) if todas_movimentacoes else "Não Localizado"
+        })
+        salvar_planilha()
+
+    except Exception as e:
+        print(f"Erro ao processar o processo {numero}: {e}")
+        dados_processos.append({
+            "Número do Processo Procurado": numero,
+            "Situação": "Não Localizado"
+        })
+        salvar_planilha()
+
+# Fecha o navegador
+driver.quit()
