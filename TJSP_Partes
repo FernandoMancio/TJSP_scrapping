@@ -1,0 +1,171 @@
+######################################################################
+# busca as partes envolvidas no processo (polo ativo | polo passivo) #
+######################################################################
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import pandas as pd
+import numpy as np
+import re, time, warnings
+
+warnings.filterwarnings('ignore')
+
+# Função para extrair partes da tabela
+def extrair_partes(driver):
+    partes = {"Requerentes": [], "Requeridos": []}
+    try:
+        tabela_partes = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.ID, "tableTodasPartes"))
+        ) or WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.ID, "tablePartesPrincipais"))
+        )
+        linhas = tabela_partes.find_elements(By.CSS_SELECTOR, "tr.fundoClaro")
+        
+        for i, linha in enumerate(linhas):
+            try:
+                tipo = linha.find_element(By.CSS_SELECTOR, ".tipoDeParticipacao").text.strip()
+                texto_completo = linha.find_element(By.CLASS_NAME, "nomeParteEAdvogado").text.strip()
+                
+                linhas_texto = texto_completo.split('\n')
+                nome_parte = linhas_texto[0].strip()
+                advogados = []
+                for linha_texto in linhas_texto[1:]:
+                    if "Advogado:" in linha_texto or "Advogada:" in linha_texto:
+                        advogado = linha_texto.split("Advogado:")[1].strip() if "Advogado:" in linha_texto else linha_texto.split("Advogada:")[1].strip()
+                        advogados.append(advogado)
+                
+                if not advogados and len(linhas_texto) <= 1:
+                    padrao = r"^(.*?)(?:\s*Advogad[oa]:\s*(.*?)(?:\s*Advogad[oa]:\s*(.*))?)$"
+                    match = re.match(padrao, texto_completo.replace('\n', ' '))
+                    if match:
+                        nome_parte = match.group(1).strip()
+                        if match.group(2):
+                            advogados.append(match.group(2).strip())
+                        if match.group(3):
+                            advogados.append(match.group(3).strip())
+                
+                advogados_str = ", ".join(advogados) if advogados else "Não informado"
+                parte_str = f"{nome_parte} (Advogado: {advogados_str})"
+                
+                if "Reqte" in tipo or "Herdeira" in tipo or "Autor" in tipo:
+                    partes["Requerentes"].append(parte_str)
+                elif "Reqdo" in tipo or "Réu" in tipo:
+                    partes["Requeridos"].append(parte_str)
+            
+            except Exception as e:
+                print(f"Erro ao processar linha {i}: {e}")
+        
+    except Exception as e:
+        print(f"Erro ao extrair partes: {e}")
+        with open("pagina_erro.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+    
+    return partes
+
+# Função genérica para processar partes (requerentes ou requeridos)
+def processar_partes(df, coluna_origem, prefixo, coluna_advogado):
+    dados_por_indice = {}
+    for idx, valor in df[coluna_origem].items():
+        if pd.isna(valor) or valor == 'Não informado':
+            dados_por_indice[idx] = (['Não informado'], ['Não informado'])
+            continue
+        padrao = r'([^(]+?)\s*\(Advogado:\s*([^)]+)\)'
+        matches = re.findall(padrao, str(valor))
+        if matches:
+            partes = [parte.strip() for parte, _ in matches]
+            advogados = [matches[0][1].strip()]
+            dados_por_indice[idx] = (partes, advogados)
+    
+    if not dados_por_indice:
+        return df
+    
+    max_partes = max(len(partes) for partes, _ in dados_por_indice.values())
+    for i in range(1, max_partes + 1):
+        df[f'{prefixo}{i}'] = np.nan
+    df[coluna_advogado] = np.nan
+    
+    for idx, (partes, advogados) in dados_por_indice.items():
+        for i, parte in enumerate(partes, 1):
+            df.at[idx, f'{prefixo}{i}'] = parte
+        df.at[idx, coluna_advogado] = advogados[0]
+    
+    return df
+
+# Lista de processos
+numeros_processos = [
+'xxxxxxx-xx.2025.8.26.xxxx',
+'yyyyyyy-yy.2023.8.26.yyyy'
+]
+
+# Configuração do WebDriver
+service = Service(ChromeDriverManager().install())
+driver = webdriver.Chrome(service=service)
+url_base = "https://esaj.tjsp.jus.br/cpopg/open.do"
+caminho_planilha = r"C:\Users\seu_path\02_partes.xlsx"
+dados_processos = []
+
+# Processamento dos processos
+for numero in numeros_processos:
+    print(f"Consultando processo: {numero}")
+    driver.get(url_base)
+    time.sleep(2)
+    
+    try:
+        campo_processo = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "numeroDigitoAnoUnificado"))
+        )
+        campo_processo.clear()
+        campo_processo.send_keys(numero[:15])
+        
+        campo_foro = driver.find_element(By.ID, "foroNumeroUnificado")
+        campo_foro.clear()
+        campo_foro.send_keys(numero[-4:])
+        
+        WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.ID, "botaoConsultarProcessos"))
+        ).click()
+        time.sleep(8)
+        
+        n_proc = driver.find_element(By.ID, "numeroProcesso").text
+        
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "setasDireitapartes"))
+            ).click()
+            time.sleep(3)
+        except Exception as e:
+            print(f"Erro ao clicar no botão 'setasDireitapartes': {e}")
+        
+        partes = extrair_partes(driver)
+        dados_processos.append({
+            "Número do Processo": n_proc,
+            "Requerentes": "\n".join(partes["Requerentes"]) if partes["Requerentes"] else "Não informado",
+            "Requeridos": "\n".join(partes["Requeridos"]) if partes["Requeridos"] else "Não informado"
+        })
+    
+    except Exception as e:
+        print(f"Erro ao processar o processo {numero}: {e}")
+        dados_processos.append({
+            "Número do Processo": numero,
+            "Erro": str(e)
+        })
+
+driver.quit()
+
+# Criação do DataFrame
+df_partes = pd.DataFrame(dados_processos)
+
+# Processamento de requerentes e requeridos
+df_partes = processar_partes(df_partes, 'Requerentes', 'Requerente', 'Adv_Contraria')
+df_partes = processar_partes(df_partes, 'Requeridos', 'Requerido', 'Adv_CDHU')
+
+# Remover colunas indesejadas
+df_partes = df_partes.drop(columns=['Requerentes', 'Requeridos', 'Erro'], errors='ignore')
+
+# Salvar planilha
+df_partes.to_excel(caminho_planilha, index=False)
+print("Processo de extração concluído!")
