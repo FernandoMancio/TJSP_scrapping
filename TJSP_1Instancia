@@ -1,0 +1,237 @@
+########################################
+# busca procesos em primeira instância #
+########################################
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import pandas as pd
+import warnings
+import time
+import re
+
+warnings.filterwarnings('ignore')
+
+# Lista de números de processos
+numeros_processos = [
+'xxxxxxx-xx.2025.8.26.xxxx',
+'yyyyyyy-yy.2025.8.26.yyyy'
+]
+
+# Lista de palavras-chave para buscar sentenças
+lista_palavras = [
+    "JULGO PROCEDENTE",
+    "JULGO PARCIALMENTE PROCEDENTE",
+    "JULGO EXTINTO",
+    "JULGO IMPROCEDENTE",
+    "JULGO-OS PROCEDENTE",
+    "JULGO-OS PARCIALMENTE PROCEDENTE",
+    "CONHEÇO EM PARTE DOS PEDIDOS"
+]
+
+# Caminho do ChromeDriver
+service = Service(ChromeDriverManager().install())
+driver = webdriver.Chrome(service=service)
+
+
+# URL do site de consulta do TJSP (1ª instância)
+url_base = "https://esaj.tjsp.jus.br/cpopg/open.do"
+
+# Caminho para salvar a planilha
+caminho_planilha = r"C:\seu_path\dados_processos1.xlsx"
+
+dados_processos = []
+
+def normalizar_texto(texto):
+    """Remove quebras de linha, espaços extras e normaliza o texto"""
+    texto = re.sub(r'\s+', ' ', texto)
+    return texto.strip()
+
+def verificar_sentenca(movimentacoes):
+    """Verifica se alguma palavra-chave está presente nas movimentações e retorna a sentença e o conteúdo"""
+    for mov in movimentacoes:
+        mov_normalizado = normalizar_texto(mov).upper()
+        for palavra in lista_palavras:
+            if palavra in mov_normalizado:
+                print(f"Sentença encontrada: {palavra} em '{mov[:100]}...'")
+                return palavra, mov
+        # Debug específico para o processo problemático
+        if "28/11/2017" in mov and "1004588-15.2016.8.26.0344" in mov:
+            print(f"Movimentação de 28/11/2017 completa: {mov[:500]}...")
+    print("Nenhuma sentença encontrada, retornando 'pendente'")
+    return "pendente", ""
+
+def extrair_partes(driver):
+    """Função para extrair as partes (mantida do Código 1, caso esteja definida em outro lugar)"""
+    try:
+        partes_elem = driver.find_elements(By.CSS_SELECTOR, "table.secaoFormBody tr")
+        partes = []
+        for parte in partes_elem:
+            texto = parte.text.strip()
+            if texto:
+                partes.append(texto)
+        return "\n".join(partes)
+    except Exception as e:
+        print(f"Erro ao extrair partes: {e}")
+        return ""
+
+for numero in numeros_processos:
+    print(f"\nIniciando extração do processo: {numero}")
+    driver.get(url_base)
+    time.sleep(2)
+
+    try:
+        # Preenche o campo "numeroDigitoAnoUnificado" com os primeiros 15 caracteres
+        campo_processo = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "numeroDigitoAnoUnificado"))
+        )
+        campo_processo.clear()
+        campo_processo.send_keys(numero[:15])
+        print(f"Número inserido no campo principal: {numero[:15]}")
+
+        # Preenche o campo "foroNumeroUnificado" com os últimos 4 caracteres
+        campo_foro = driver.find_element(By.ID, "foroNumeroUnificado")
+        campo_foro.clear()
+        campo_foro.send_keys(numero[-4:])
+        print(f"Foro inserido: {numero[-4:]}")
+
+        # Clica no botão "Consultar"
+        botao_consultar = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.ID, "botaoConsultarProcessos"))
+        )
+        botao_consultar.click()
+        time.sleep(8)
+        print("Consulta realizada")
+
+        # Clica nos botões "Mais" para expandir os dados
+        try:
+            botao_mais = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "botaoExpandirDadosSecundarios"))
+            )
+            botao_mais.click()
+            time.sleep(4)
+            
+            botao_mais = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "setasDireitapartes"))
+            )
+            botao_mais.click()
+            time.sleep(4)
+
+            botao_mais = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.ID, "setasDireitamovimentacoes"))
+            )
+            botao_mais.click()
+            time.sleep(4)
+            print("Dados secundários expandidos")
+        except Exception as e:
+            print(f"Erro ao clicar no botão 'Mais': {e}")
+
+        # Extrai os dados do processo
+        try:
+            n_proc = driver.find_element(By.ID, "numeroProcesso").text
+            print(f"Número do processo extraído: {n_proc}")
+        except Exception as e:
+            print(f"Erro ao extrair número do processo: {e}")
+            n_proc = numero
+
+        try:
+            classe = driver.find_element(By.ID, "classeProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair classe: {e}")
+            classe = ""
+
+        try:
+            assunto = driver.find_element(By.ID, "assuntoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair assunto: {e}")
+            assunto = ""
+
+        try:
+            foro = driver.find_element(By.ID, "foroProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair foro: {e}")
+            foro = ""
+
+        try:
+            vara = driver.find_element(By.ID, "varaProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair vara: {e}")
+            vara = ""
+
+        try:
+            juiz = driver.find_element(By.ID, "juizProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair juiz: {e}")
+            juiz = ""
+
+        try:
+            vl_acao = driver.find_element(By.ID, "valorAcaoProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair valor da ação: {e}")
+            vl_acao = ""
+
+        try:
+            area = driver.find_element(By.ID, "areaProcesso").text
+        except Exception as e:
+            print(f"Erro ao extrair área: {e}")
+            area = ""
+
+        # Coletando TODAS as movimentações
+        try:
+            movimentacoes = driver.find_elements(By.CSS_SELECTOR, "tr.containerMovimentacao")
+            ultimas_movimentacoes = []
+            print(f"Encontradas {len(movimentacoes)} movimentações")
+        except Exception as e:
+            ultimas_movimentacoes = []
+            print(f"Erro ao coletar movimentações: {e}")
+
+        for movimentacao in movimentacoes:
+            try:
+                data = movimentacao.find_element(By.CLASS_NAME, "dataMovimentacao").text
+                # Captura todo o texto da descrição usando innerText
+                descricao_elem = movimentacao.find_element(By.CLASS_NAME, "descricaoMovimentacao")
+                descricao = descricao_elem.get_attribute('innerText').strip()
+                mov_text = f"{data}: {descricao}"
+                ultimas_movimentacoes.append(mov_text)
+                print(f"Movimentação coletada: {mov_text[:100]}...")
+            except Exception as e:
+                print(f"Erro ao extrair movimentação: {e}")
+
+        # Verifica se há sentença nas movimentações
+        status_sentenca, conteudo_sentenca = verificar_sentenca(ultimas_movimentacoes)
+
+        # Adiciona os dados na lista
+        dados_processos.append({
+            "Número do Processo": n_proc,
+            "Classe": classe,
+            "Assunto": assunto,
+            "Foro": foro,
+            "Vara": vara,
+            "Juiz": juiz,
+            "Vl_Ação": vl_acao,
+            "Área": area,
+            "Conteúdo da Sentença": conteudo_sentenca,
+            "Status Sentença": status_sentenca
+            
+        })
+        print(f"Dados do processo {n_proc} adicionados")
+
+    except Exception as e:
+        print(f"Erro ao processar o processo {numero}: {e}")
+
+# Fecha o navegador
+driver.quit()
+
+# Salva os dados na planilha
+if dados_processos:
+    df = pd.DataFrame(dados_processos)
+    
+    df['Status Sentença'] = df['Status Sentença'].str.replace(r'JULGO-OS\s*|JULGO\s*', '', regex=True)
+    df.to_excel(caminho_planilha, index=False)
+    print(f"Planilha salva com {len(dados_processos)} processos")
+else:
+    print("Nenhum dado foi coletado para salvar na planilha")
+
+print("Processo de extração concluído!")
